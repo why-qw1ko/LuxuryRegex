@@ -7,6 +7,7 @@ import ColorSettings from './ColorSettings.vue'
 import { categoryKeys, categoryLabels, defaultPalette, validPalette } from './palettes.js'
 import { generate, generateWithFixed, splitSegments } from './regex.js'
 import { groupCandidates } from './candidate-groups.js'
+import { requestSettings } from './settings-client.js'
 
 const input = ref('LuxuryRegex666')
 const mode = ref('strict')
@@ -53,8 +54,9 @@ let saveQueue = Promise.resolve()
 let savedTimer
 const examples = ['LuxuryRegex666', 'Hello 2025', '你好，世界', 'hello@example.com']
 const maxFocus = 200
-const focusedText = computed(() => Array.from(input.value).slice(0, maxFocus).join(''))
-const truncated = computed(() => Array.from(input.value).length > maxFocus)
+const inputChars = computed(() => Array.from(input.value))
+const focusedText = computed(() => inputChars.value.slice(0, maxFocus).join(''))
+const truncated = computed(() => inputChars.value.length > maxFocus)
 const segments = computed(() => splitSegments(focusedText.value))
 const highlighted = computed(() => {
   const runs = []
@@ -77,7 +79,7 @@ const candidates = computed(() => fixedRanges.value.length ? generateWithFixed(f
 const groupNames = ['精确', '类别', '泛化']
 const groupKeys = { 精确: 'exact', 类别: 'category', 泛化: 'broad' }
 const groupDefaults = ref({ exact: true, category: true, broad: true })
-const groups = computed(() => groupCandidates(candidates.value, groupNames))
+const groups = computed(() => groupCandidates(candidates.value, groupNames, 4, mode.value))
 const selectedCandidates = computed(() => generate(Array.from(selected.value).slice(0, maxFocus).join(''), mode.value).slice(0, 5))
 const visualParts = computed(() => candidates.value.find(x => x.label === '完整结构')?.parts || candidates.value[0]?.parts || (focusedText.value ? [candidates.value[0]?.pattern] : []))
 const groupOpen = ref({ 精确: true, 类别: true, 泛化: true })
@@ -167,10 +169,7 @@ function saveSetting(values) {
   savedNotice.value = false
   saveQueue = saveQueue.then(async () => {
     try {
-      const response = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot) })
-      if (!response.ok) throw new Error('save')
-      const saved = await response.json()
-      if (saved.version !== 2) throw new Error('incompatible')
+      await requestSettings(snapshot)
       const failures = { ...failedValues.value }
       for (const key of Object.keys(snapshot)) delete failures[key]
       failedValues.value = failures
@@ -201,14 +200,12 @@ function handlePointer(e) { if (!(e.target instanceof Element) || (!e.target.clo
 watch(input, () => { popup.value = false; fixedRanges.value = [] }, { flush: 'sync' })
 watch(candidates, () => { expandedGroups.value = {} }, { flush: 'sync' })
 watch(theme, value => { document.documentElement.dataset.theme = value }, { immediate: true })
+watch(page, dismissSelection)
 onMounted(async () => {
   document.addEventListener('keydown', handleGlobal)
   document.addEventListener('pointerdown', handlePointer)
   try {
-    const response = await fetch('/api/settings')
-    if (!response.ok) throw new Error('load')
-    const settings = await response.json()
-    if (settings.version !== 2) throw new Error('outdated')
+    const settings = await requestSettings()
     mode.value = settings.mode
     if (settings.theme) theme.value = settings.theme
     showSegments.value = settings.showSegments
@@ -247,7 +244,7 @@ onUnmounted(() => { document.removeEventListener('keydown', handleGlobal); docum
                 <div ref="editorMirror" class="editor-mirror" aria-hidden="true"><div class="editor-content"><template v-for="(run, index) in highlighted" :key="index"><span :class="{ 'fixed-run': run.fixed }"><span v-for="(segment, segmentIndex) in run.segments" :key="segmentIndex" :class="`highlight-${segment.type}`">{{ segment.text }}</span></span></template><span v-if="input.endsWith('\n')">&#8203;</span></div></div>
                 <textarea ref="inputEl" v-model="input" aria-label="输入用于生成正则的文本" spellcheck="false" placeholder="在这里输入文字..." @scroll="syncScroll" @pointerdown="beginSelection" @keydown="beginKeyboardSelection" @mouseup="updateSelection" @keyup="handleEditorKeyup" @select="updateSelection" @compositionstart="composing = true" @compositionend="composing = false" @touchend="updateSelection" @dragstart.prevent @drop.prevent></textarea>
               </div>
-              <div class="editor-meta"><div class="legend"><span v-for="key in categoryKeys" :key="key" tabindex="0" :aria-label="`${categoryLabels[key]}颜色 ${palette[theme][key].toUpperCase()}`" :data-color="palette[theme][key].toUpperCase()"><i :class="`legend-${key}`"></i>{{ categoryLabels[key] }}</span></div><span>{{ Array.from(input).length }} 字符</span></div>
+              <div class="editor-meta"><div class="legend"><span v-for="key in categoryKeys" :key="key" tabindex="0" :aria-label="`${categoryLabels[key]}颜色 ${palette[theme][key].toUpperCase()}`" :data-color="palette[theme][key].toUpperCase()"><i :class="`legend-${key}`"></i>{{ categoryLabels[key] }}</span></div><span>{{ inputChars.length }} 字符</span></div>
               <div v-if="fixedRanges.length" class="fixed-list" aria-label="已固定片段"><span>已固定</span><button v-for="(range, index) in fixedRanges" :key="`${range.start}-${range.end}`" :aria-label="`取消固定 ${input.slice(range.start, range.end)}`" @click="removeFixed(index)"><span>{{ input.slice(range.start, range.end) }}</span><Icon name="close" :size="13" /></button></div>
               
               <div v-if="truncated" class="limit-note">为保持响应速度，整体分析前 {{ maxFocus }} 个字符；选中其他片段可单独分析。</div>
@@ -274,6 +271,6 @@ onUnmounted(() => { document.removeEventListener('keydown', handleGlobal); docum
       <div v-if="settingsError || saveError || savingCount || savedNotice" class="save-status" :class="{ 'notice-error': settingsError || (saveError && !savingCount), 'notice-success': !settingsError && !saveError && !savingCount }" role="status" aria-live="polite"><Icon :name="settingsError || (saveError && !savingCount) ? 'info' : savingCount ? 'settings' : 'check'" :size="18" /><span>{{ settingsError || (savingCount ? '正在保存…' : saveError ? '设置保存失败，请重试。' : '设置已保存') }}</span><button v-if="saveError && !settingsError && !savingCount" @click="retrySave">重试</button></div>
       <div v-if="feedback" class="save-status" :class="feedback.type === 'error' ? 'notice-error' : 'notice-success'" role="status" aria-live="polite"><Icon :name="feedback.type === 'error' ? 'info' : 'check'" :size="18" /><span>{{ feedback.message }}</span></div>
     </div>
-    <div v-if="popup && selected" class="selection-popover" :style="{ top: `${selectionPosition.top}px`, left: `${selectionPosition.left}px` }" role="dialog" aria-label="选中文本的正则建议"><div class="popover-head"><div><span>选中片段</span><strong>{{ selected.length > 30 ? selected.slice(0, 30) + '…' : selected }}</strong></div><button class="icon-button" aria-label="关闭" @click="dismissSelection"><Icon name="close" :size="16" /></button></div><div class="fix-selection"><span>固定此片段<small>用于生成整体正则</small></span><button class="switch" role="switch" :disabled="!canFixSelection" aria-label="固定此片段" :aria-checked="selectionIsFixed" :class="{ checked: selectionIsFixed }" @click="toggleFixedSelection"><span></span></button></div><p v-if="!canFixSelection" class="fix-help">只能固定前 {{ maxFocus }} 个字符内的片段。</p><div class="popover-list"><Candidate v-for="item in selectedCandidates" :key="item.pattern" :item="item" compact @insert="insert" @feedback="showFeedback" /></div><p>点击 + 插入结果框 · Esc 关闭</p></div>
+    <div v-if="popup && selected" class="selection-popover" :style="{ top: `${selectionPosition.top}px`, left: `${selectionPosition.left}px` }" role="dialog" aria-label="选中文本的正则建议"><div class="popover-head"><div><span>选中片段</span><strong>{{ selected.length > 30 ? selected.slice(0, 30) + '…' : selected }}</strong></div><button class="icon-button" aria-label="关闭" @click="dismissSelection"><Icon name="close" :size="16" /></button></div><div class="fix-selection"><span>固定此片段<small>用于生成整体正则</small></span><button class="switch" role="switch" :disabled="!canFixSelection" aria-label="固定此片段" :aria-checked="selectionIsFixed" :class="{ checked: selectionIsFixed }" @click="toggleFixedSelection"><span></span></button></div><p v-if="!canFixSelection" class="fix-help">只能固定前 {{ maxFocus }} 个字符内的片段。</p><div class="popover-list"><Candidate v-for="item in selectedCandidates" :key="item.pattern" :item="item" compact @insert="insert" @feedback="showFeedback" /></div><p v-if="Array.from(selected).length > maxFocus" class="fix-help">选区仅分析前 {{ maxFocus }} 个字符。</p><p>点击 + 插入结果框 · Esc 关闭</p></div>
   </div>
 </template>

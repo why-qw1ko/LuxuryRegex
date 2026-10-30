@@ -7,14 +7,15 @@ const types = [
   ['han', /\p{Script=Han}/u, '\\p{Script=Han}', '汉字'],
   ['space', /\s/u, '\\s', '空白字符'],
   ['letter', /\p{L}/u, '\\p{L}', 'Unicode 字母'],
+  ['digit', /\p{N}/u, '\\p{N}', 'Unicode 数字'],
   ['symbol', /[\s\S]/u, null, '符号']
 ]
 export function splitSegments(text) {
   const result = []
-  for (const char of Array.from(text)) {
+  for (const char of text) {
     const [type, , base, label] = types.find(([, regex]) => regex.test(char))
     const last = result.at(-1)
-    if (last && last.type === type) last.text += char
+    if (last && last.type === type && last.base === base) last.text += char
     else result.push({ type, base, label, text: char })
   }
   return result
@@ -75,7 +76,7 @@ export function generate(text, mode = 'strict') {
     const labels = segments.map(s => `${Array.from(s.text).length} 个${s.label}`).join(' + ')
     add(segmentPattern, '类别', labels, '按类型组合', segments.map(s => s.base ? s.base + count(Array.from(s.text).length) : escapeLiteral(s.text)))
     add(`^${segmentPattern}$`, '类别', `完整匹配：${labels}`, '完整结构', ['^', ...segments.map(s => s.base ? s.base + count(Array.from(s.text).length) : escapeLiteral(s.text)), '$'])
-    if (segments.every(s => ['upper', 'lower', 'digit'].includes(s.type))) {
+    if (/^[A-Za-z0-9]+$/u.test(text)) {
       const relaxed = segments.map(s => s.type === 'digit' ? `[0-9]${count(Array.from(s.text).length)}` : `[A-Za-z]${count(Array.from(s.text).length)}`).join('')
       add(`^${relaxed}$`, '泛化', '字母不区分大小写，数字长度保持不变', '字母 + 数字')
       add(`\\w{${n}}`, '泛化', `匹配 ${n} 个 ASCII 字母、数字或下划线`, '单词字符')

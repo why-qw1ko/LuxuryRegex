@@ -45,3 +45,30 @@ test('category colors persist for both themes and reject malformed values', () =
   assert.deepEqual(store.read().palette, defaultPalette())
   db.close()
 })
+
+test('storage errors roll back the whole settings update', () => {
+  const db = new DatabaseSync(':memory:')
+  try {
+    const store = createSettingsStore(db)
+    store.write({ mode: 'strict' })
+    db.exec("CREATE TRIGGER reject_theme BEFORE INSERT ON settings WHEN NEW.key = 'theme' BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+    assert.throws(() => store.write({ mode: 'loose', theme: 'dark' }))
+    assert.equal(store.read().mode, 'strict')
+    assert.equal(store.read().theme, null)
+    store.write({ showSegments: false })
+    assert.equal(store.read().showSegments, false)
+  } finally { db.close() }
+})
+
+test('malformed stored settings fall back to valid defaults', () => {
+  const db = new DatabaseSync(':memory:')
+  try {
+    const store = createSettingsStore(db)
+    const insert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)')
+    for (const [key, value] of [['mode', 'invalid'], ['theme', 'invalid'], ['palette', '{'], ['groupDefaults', 'null']]) insert.run(key, value)
+    assert.equal(store.read().mode, 'strict')
+    assert.equal(store.read().theme, null)
+    assert.deepEqual(store.read().palette, defaultPalette())
+    assert.deepEqual(store.read().groupDefaults, { exact: true, category: true, broad: true })
+  } finally { db.close() }
+})

@@ -34,6 +34,19 @@ test('classifies non-ASCII letters and numbers correctly', () => {
   }
 })
 
+test('Unicode number segments retain their own class alongside ASCII digits', () => {
+  assert.deepEqual(splitSegments('12١Ⅻ3').map(({ type, base, text }) => [type, base, text]), [
+    ['digit', '\\d', '12'], ['digit', '\\p{N}', '١Ⅻ'], ['digit', '\\d', '3']
+  ])
+  assert.ok(generate('١Ⅻ').some(candidate => candidate.pattern === '\\p{N}{2}'))
+  const fixed = generateWithFixed('ID١Ⅻ', [{ start: 0, end: 2 }])
+  assert.equal(fixed[0].pattern, '^ID\\p{N}{2}$')
+  assert.ok(new RegExp(fixed[0].pattern, 'u').test('ID２٣'))
+  for (const candidate of [...generate('12١Ⅻ3'), ...fixed]) {
+    assert.ok(new RegExp(candidate.pattern, 'u').test(candidate.pattern.startsWith('^ID') ? 'ID١Ⅻ' : '12١Ⅻ3'))
+  }
+})
+
 test('fixed ranges produce whole-text patterns with fixed and variable lengths', () => {
   const candidates = generateWithFixed('LuxuryRegex666', [{ start: 0, end: 6 }])
   assert.equal(candidates[0].pattern, '^Luxury[A-Z][a-z]{4}\\d{3}$')
