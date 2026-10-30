@@ -1,0 +1,22 @@
+{
+  "name": "regex-garden",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-sqlite server.mjs",
+    "build": "vite build --configLoader runner",
+    "test": "node --experimental-sqlite --test tests/*.test.js"
+  },
+  "dependencies": {
+    "element-plus": "^2.9.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.6",
+    "vite": "^7.3.2"
+  },
+  "engines": { "node": ">=22.12" }
+}
+
+
